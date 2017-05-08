@@ -20,7 +20,8 @@ export class MessagesPage implements OnInit, OnDestroy {
   message: string = '';
   autoScroller: MutationObserver;
   scrollOffset = 0;
-
+  senderId: string;
+  
   constructor(
     navParams: NavParams,
     private el: ElementRef
@@ -29,6 +30,7 @@ export class MessagesPage implements OnInit, OnDestroy {
     this.selectedChat = <Chat>navParams.get('chat');
     this.title = this.selectedChat.title;
     this.picture = this.selectedChat.picture;
+    this.senderId = Meteor.userId();
   }
 
   private get messagesPageContent(): Element {
@@ -55,7 +57,7 @@ export class MessagesPage implements OnInit, OnDestroy {
       {sort: {createdAt: 1}}
     ).map((messages: Message[]) => {
       messages.forEach((message: Message) => {
-        message.ownership = isEven ? 'mine' : 'other';
+       message.ownership = this.senderId == message.senderId ? 'mine' : 'other';
         isEven = !isEven;
       });
  
