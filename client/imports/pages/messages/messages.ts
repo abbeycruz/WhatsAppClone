@@ -3,7 +3,7 @@ import { NavParams, PopoverController } from 'ionic-angular';
 import { MeteorObservable } from 'meteor-rxjs';
 import { _ } from 'meteor/underscore';
 import * as Moment from 'moment';
-import { Observable, Subscription } from 'rxjs';
+import { Observable, Subscription, Subscriber } from 'rxjs';
 import { Messages } from '../../../../imports/collections';
 import { Chat, Message } from '../../../../imports/models';
 import { MessagesOptionsComponent } from './messages-options';
@@ -24,6 +24,7 @@ export class MessagesPage implements OnInit, OnDestroy {
   senderId: string;
   loadingMessages: boolean;
   messagesComputation: Subscription;
+  messagesBatchCounter: number = 0;
  
   
   constructor(
@@ -55,18 +56,20 @@ export class MessagesPage implements OnInit, OnDestroy {
 
     this.subscribeMessages();
 
-    let isEven = false;
- 
-    this.messages = Messages.find(
-      {chatId: this.selectedChat._id},
-      {sort: {createdAt: 1}}
-    ).map((messages: Message[]) => {
-      messages.forEach((message: Message) => {
-       message.ownership = this.senderId == message.senderId ? 'mine' : 'other';
-        isEven = !isEven;
-      });
- 
-      return messages;
+    // Get total messages count in database so we can have an indication of when to
+    // stop the auto-subscriber
+    MeteorObservable.call('countMessages').subscribe((messagesCount: number) => {
+      Observable
+      // Chain every scroll event
+        .fromEvent(this.scroller, 'scroll')
+        // Remove the scroll listener once all messages have been fetched
+        .takeUntil(this.autoRemoveScrollListener(messagesCount))
+        // Filter event handling unless we're at the top of the page
+        .filter(() => !this.scroller.scrollTop)
+        // Prohibit parallel subscriptions
+        .filter(() => !this.loadingMessages)
+        // Invoke the messages subscription once all the requirements have been met
+        .forEach(() => this.subscribeMessages());
     });
   }
 
@@ -82,7 +85,8 @@ ngOnDestroy() {
     this.scrollOffset = this.scroller.scrollHeight;
     
     MeteorObservable.subscribe('messages',
-      this.selectedChat._id
+       this.selectedChat._id,
+      ++this.messagesBatchCounter
     ).subscribe(() => {
       // Keep tracking changes in the dataset and re-render the view
       if (!this.messagesComputation) {
@@ -93,6 +97,31 @@ ngOnDestroy() {
       this.loadingMessages = false;
     });
   }
+
+  
+  // Removes the scroll listener once all messages from the past were fetched
+  autoRemoveScrollListener<T>(messagesCount: number): Observable<T> {
+    return Observable.create((observer: Subscriber<T>) => {
+      Messages.find().subscribe({
+        next: (messages) => {
+          // Once all messages have been fetched
+          if (messagesCount !== messages.length) {
+            return;
+          }
+ 
+          // Signal to stop listening to the scroll event
+          observer.next();
+ 
+          // Finish the observation to prevent unnecessary calculations
+          observer.complete();
+        },
+        error: (e) => {
+          observer.error(e);
+        }
+      });
+    });
+  }
+ 
  
   // Detects changes in the messages dataset and re-renders the view
   autorunMessages(): Subscription {
@@ -163,7 +192,7 @@ ngOnDestroy() {
     if (this.loadingMessages) {
       return;
     }
-    
+
     // Scroll down and apply specified offset
     this.scroller.scrollTop = this.scroller.scrollHeight - this.scrollOffset;
     // Zero offset for next invocation
